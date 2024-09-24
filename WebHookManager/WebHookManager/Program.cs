@@ -1,8 +1,10 @@
 using System.Net;
 using System.Net.Mail;
 using System.Text.Json;
+using Microsoft.AspNetCore.Authentication;
 using Microsoft.AspNetCore.Http.HttpResults;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.Extensions.Options;
 using Supabase;
 using WebHookManager;
 
@@ -20,6 +22,8 @@ builder.Services.AddScoped<Client>(_ => new Client(
     ));
 builder.Services.AddScoped<StorageRepository>();
 
+builder.Services.Configure<AuthenticationOptions>(builder.Configuration.GetSection("Authentication"));
+
 var app = builder.Build();
 
 // Configure the HTTP request pipeline.
@@ -33,29 +37,21 @@ app.UseHttpsRedirection();
 
 app.MapPost("/{id}", async (
         [FromRoute]string id, 
-        [FromBody]Arkham arkham, 
-        [FromServices]StorageRepository repo) =>
+        [FromQuery]string token,
+        HttpContext context,
+        [FromServices]StorageRepository repo,
+        [FromServices]IConfiguration configuration) =>
     {
-        await repo.InsertAsync(id, JsonSerializer.Serialize(arkham));
-        
-        // Header -> Arkham-Webhook-Token : we5kjWqphpZs9I
-        // var from = "noreply@test.com";
-        // var to = "skorcius@skorcius.xyz";
-        // var msg = new MailMessage()
-        // {
-        //     From = new MailAddress(from),
-        //     To = { to },
-        //     Subject = "Arkham",
-        //     Body = JsonSerializer.Serialize(arhkam),
-        //     
-        // };
-        //
-        // var client = new SmtpClient("smtp-mail.outlook.com", 587);
-        // client.Credentials = new NetworkCredential("", "");
-        // client.EnableSsl = true;
-        //
-        // client.Send(msg);
+        var configToken = configuration.GetValue<string>("Authentication:Token")!;
+        if (!configToken.Equals(token, StringComparison.InvariantCultureIgnoreCase))
+        {
+            return Results.Unauthorized();
+        }
 
+        using var reader = new StreamReader(context.Request.Body);
+        var content = await reader.ReadToEndAsync();
+        await repo.InsertAsync(id, content);
+        
         return Results.NoContent();
     })
     .WithName("webhook")
